@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ChatGPT → JSONL 변환기 | zero-to-llm</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+KR:wght@300;400;500&display=swap');
 *{box-sizing:border-box;margin:0;padding:0}
@@ -19,7 +20,9 @@ body{background:var(--bg);color:var(--text);font-family:var(--font-body);font-si
 .header{margin-bottom:32px}
 .header h1{font-family:var(--font-mono);font-size:20px;font-weight:500;color:var(--accent);letter-spacing:-0.5px}
 .header p{color:var(--muted);font-size:13px;margin-top:8px;line-height:1.6}
-.badge{display:inline-block;background:#0a2a1a;color:var(--accent);font-family:var(--font-mono);font-size:10px;padding:2px 8px;border-radius:4px;border:1px solid var(--accent2);margin-top:8px}
+.badges{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+.badge{display:inline-block;background:#0a2a1a;color:var(--accent);font-family:var(--font-mono);font-size:10px;padding:2px 8px;border-radius:4px;border:1px solid var(--accent2)}
+.badge.gray{background:#1a1a1a;color:var(--muted);border-color:var(--border)}
 
 .drop-zone{
   border:1.5px dashed var(--border);border-radius:12px;
@@ -30,7 +33,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--font-body);font-si
 .drop-zone.drag-over{transform:scale(1.01)}
 .drop-icon{font-size:36px;margin-bottom:14px;display:block}
 .drop-title{font-family:var(--font-mono);font-size:15px;font-weight:500;color:var(--text);margin-bottom:6px}
-.drop-sub{font-size:12px;color:var(--muted)}
+.drop-sub{font-size:12px;color:var(--muted);line-height:1.8}
 .drop-zone input[type=file]{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
 
 .options{margin:20px 0;display:flex;flex-direction:column;gap:10px}
@@ -47,7 +50,14 @@ body{background:var(--bg);color:var(--text);font-family:var(--font-body);font-si
 .file-list{margin:14px 0;display:flex;flex-direction:column;gap:8px}
 .file-item{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--surface);border-radius:8px;border:1px solid var(--border)}
 .file-dot{width:8px;height:8px;background:var(--accent);border-radius:50%;flex-shrink:0}
+.file-dot.json{background:#7eb8ff}
+.file-dot.zip{background:var(--accent)}
+.file-dot.html{background:#f5c842}
 .file-name{font-family:var(--font-mono);font-size:12px;color:var(--text);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.file-type{font-family:var(--font-mono);font-size:10px;padding:2px 6px;border-radius:3px;flex-shrink:0}
+.file-type.json{background:#0d1f35;color:#7eb8ff;border:1px solid #1a3a5c}
+.file-type.zip{background:#0a2a1a;color:var(--accent);border:1px solid var(--accent2)}
+.file-type.html{background:#2a2200;color:#f5c842;border:1px solid #4a3d00}
 .file-size{font-size:11px;color:var(--muted);flex-shrink:0}
 .file-remove{background:none;border:none;color:var(--muted);cursor:pointer;font-size:18px;line-height:1;padding:0 2px}
 .file-remove:hover{color:var(--danger)}
@@ -60,11 +70,12 @@ body{background:var(--bg);color:var(--text);font-family:var(--font-body);font-si
 .log-header{padding:10px 14px;border-bottom:1px solid var(--border);font-family:var(--font-mono);font-size:11px;color:var(--muted);display:flex;align-items:center;gap:6px}
 .log-dot{width:6px;height:6px;border-radius:50%;background:var(--accent);animation:pulse 1.5s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
-.log-body{padding:14px;font-family:var(--font-mono);font-size:12px;line-height:1.8;max-height:200px;overflow-y:auto}
+.log-body{padding:14px;font-family:var(--font-mono);font-size:12px;line-height:1.8;max-height:220px;overflow-y:auto}
 .log-line{color:var(--muted)}
 .log-line.ok{color:var(--accent)}
 .log-line.err{color:var(--danger)}
 .log-line.info{color:#7eb8ff}
+.log-line.warn{color:#f5c842}
 
 .result-box{margin-top:16px;padding:18px;background:#0a1f16;border:1px solid var(--accent2);border-radius:8px}
 .result-title{font-family:var(--font-mono);font-size:12px;color:var(--accent);margin-bottom:12px}
@@ -72,7 +83,7 @@ body{background:var(--bg);color:var(--text);font-family:var(--font-body);font-si
 .stat{text-align:center;padding:12px;background:#0f2a1c;border-radius:6px}
 .stat-num{font-family:var(--font-mono);font-size:22px;font-weight:500;color:var(--accent)}
 .stat-label{font-size:11px;color:var(--muted);margin-top:2px}
-.preview{background:#070f0b;border-radius:6px;padding:12px;font-family:var(--font-mono);font-size:11px;color:#7cb;line-height:1.7;max-height:120px;overflow-y:auto;margin-bottom:12px;word-break:break-all}
+.preview{background:#070f0b;border-radius:6px;padding:12px;font-family:var(--font-mono);font-size:11px;color:#7cb;line-height:1.7;max-height:140px;overflow-y:auto;margin-bottom:12px;word-break:break-all;white-space:pre-wrap}
 .dl-btn{width:100%;padding:12px;background:transparent;color:var(--accent);border:1.5px solid var(--accent);border-radius:8px;font-family:var(--font-mono);font-size:13px;font-weight:500;cursor:pointer;transition:all .2s}
 .dl-btn:hover{background:var(--accent);color:#000}
 .footer{margin-top:40px;padding-top:20px;border-top:1px solid var(--border);font-family:var(--font-mono);font-size:11px;color:var(--muted);text-align:center}
@@ -82,15 +93,23 @@ body{background:var(--bg);color:var(--text);font-family:var(--font-body);font-si
 <div class="app">
   <div class="header">
     <h1>// ChatGPT → JSONL 변환기</h1>
-    <p>ChatGPT 대화 내보내기 HTML 파일을 LLM 파인튜닝용 JSONL로 변환합니다.<br>변환은 브라우저 내에서만 처리되어 데이터가 외부로 전송되지 않습니다.</p>
-    <span class="badge">🔒 로컬 처리 · 보안 안전</span>
+    <p>ChatGPT 내보내기 파일을 LLM 파인튜닝용 JSONL로 변환합니다.<br>변환은 브라우저 내에서만 처리되어 데이터가 외부로 전송되지 않습니다.</p>
+    <div class="badges">
+      <span class="badge">🔒 로컬 처리</span>
+      <span class="badge gray">.zip 지원</span>
+      <span class="badge gray">.json 지원</span>
+      <span class="badge gray">.html 지원</span>
+    </div>
   </div>
 
   <div class="drop-zone" id="dropZone">
-    <input type="file" id="fileInput" accept=".html,.htm" multiple>
+    <input type="file" id="fileInput" accept=".zip,.json,.html,.htm" multiple>
     <span class="drop-icon">📂</span>
-    <div class="drop-title">HTML 파일을 여기에 드래그하세요</div>
-    <div class="drop-sub">또는 클릭해서 파일 선택 · 여러 파일 동시 가능</div>
+    <div class="drop-title">파일을 여기에 드래그하세요</div>
+    <div class="drop-sub">
+      ChatGPT 내보내기 ZIP · conversations.json · HTML<br>
+      여러 파일 동시 가능
+    </div>
   </div>
 
   <div class="file-list" id="fileList"></div>
@@ -147,7 +166,6 @@ let resultData = '';
 
 const dropZone = document.getElementById('dropZone');
 const fileInput = document.getElementById('fileInput');
-const fileList = document.getElementById('fileList');
 const convertBtn = document.getElementById('convertBtn');
 
 dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
@@ -158,18 +176,33 @@ dropZone.addEventListener('drop', e => {
 });
 fileInput.addEventListener('change', () => addFiles([...fileInput.files]));
 
+function getExt(name) {
+  return name.split('.').pop().toLowerCase();
+}
+function getType(name) {
+  const ext = getExt(name);
+  if (ext === 'zip') return 'zip';
+  if (ext === 'json') return 'json';
+  return 'html';
+}
 function addFiles(newFiles) {
-  newFiles.forEach(f => { if(f.name.match(/\.html?$/i) && !files.find(x=>x.name===f.name)) files.push(f); });
+  newFiles.forEach(f => {
+    const ext = getExt(f.name);
+    if (['zip','json','html','htm'].includes(ext) && !files.find(x=>x.name===f.name)) files.push(f);
+  });
   renderFiles();
 }
 function renderFiles() {
-  fileList.innerHTML = files.map((f,i) => `
-    <div class="file-item">
-      <div class="file-dot"></div>
+  document.getElementById('fileList').innerHTML = files.map((f,i) => {
+    const t = getType(f.name);
+    return `<div class="file-item">
+      <div class="file-dot ${t}"></div>
       <div class="file-name">${f.name}</div>
+      <span class="file-type ${t}">.${getExt(f.name)}</span>
       <div class="file-size">${(f.size/1024).toFixed(1)} KB</div>
       <button class="file-remove" onclick="removeFile(${i})">×</button>
-    </div>`).join('');
+    </div>`;
+  }).join('');
   convertBtn.disabled = files.length === 0;
 }
 function removeFile(i) { files.splice(i,1); renderFiles(); }
@@ -186,11 +219,46 @@ function log(msg, type='') {
   body.scrollTop = body.scrollHeight;
 }
 function cleanPII(text) {
+  if (!text) return '';
   return text
     .replace(/\b\d{3}[-.]?\d{3,4}[-.]?\d{4}\b/g, '[전화번호]')
     .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '[이메일]')
     .replace(/\b\d{6}-\d{7}\b/g, '[주민번호]');
 }
+
+// ── JSON 파싱 (ChatGPT conversations.json) ──
+function parseJSON(jsonStr) {
+  const pairs = [];
+  let data;
+  try { data = JSON.parse(jsonStr); } catch(e) { return pairs; }
+
+  const convs = Array.isArray(data) ? data : (data.conversations || []);
+  convs.forEach(conv => {
+    const mapping = conv.mapping || {};
+    const nodes = Object.values(mapping);
+    // 메시지를 시간순 정렬
+    const msgs = nodes
+      .filter(n => n.message && n.message.content && n.message.author)
+      .sort((a,b) => (a.message.create_time||0) - (b.message.create_time||0));
+
+    let userMsg = null;
+    msgs.forEach(n => {
+      const role = n.message.author.role;
+      const parts = n.message.content.parts || [];
+      const text = parts.filter(p => typeof p === 'string').join('').trim();
+      if (!text) return;
+      if (role === 'user') {
+        userMsg = text;
+      } else if (role === 'assistant' && userMsg) {
+        pairs.push({ human: userMsg, assistant: text });
+        userMsg = null;
+      }
+    });
+  });
+  return pairs;
+}
+
+// ── HTML 파싱 ──
 function parseHTML(html) {
   const parser = new DOMParser();
   const doc = parser.parseFromString(html, 'text/html');
@@ -206,26 +274,44 @@ function parseHTML(html) {
     });
     if (pairs.length > 0) return pairs;
   }
-  const turns = doc.querySelectorAll('.conversation-turn, .group');
-  if (turns.length > 0) {
-    let userMsg = null;
-    turns.forEach(turn => {
-      const isUser = turn.querySelector('[data-testid*="user"], .user-turn');
-      const isAsst = turn.querySelector('[data-testid*="assistant"], .assistant-turn');
-      const text = (turn.innerText || turn.textContent || '').trim();
-      if (isUser && !isAsst) userMsg = text;
-      else if (isAsst && userMsg) { pairs.push({human:userMsg, assistant:text}); userMsg=null; }
-    });
-    if (pairs.length > 0) return pairs;
-  }
+  // fallback
   const allText = [];
   doc.querySelectorAll('p, .message').forEach(el => {
-    const t = (el.innerText || el.textContent || '').trim();
+    const t = (el.innerText||el.textContent||'').trim();
     if (t.length > 10) allText.push(t);
   });
-  for (let i = 0; i+1 < allText.length; i+=2) pairs.push({human:allText[i], assistant:allText[i+1]});
+  for (let i=0; i+1<allText.length; i+=2) pairs.push({human:allText[i], assistant:allText[i+1]});
   return pairs;
 }
+
+// ── ZIP 처리 ──
+async function parseZIP(file) {
+  const pairs = [];
+  try {
+    const zip = await JSZip.loadAsync(file);
+    // conversations.json 찾기
+    let jsonFile = null;
+    zip.forEach((path, f) => {
+      if (path.endsWith('conversations.json')) jsonFile = f;
+    });
+    if (jsonFile) {
+      log('  ZIP 안에서 conversations.json 발견!', 'ok');
+      const jsonStr = await jsonFile.async('string');
+      return parseJSON(jsonStr);
+    } else {
+      log('  conversations.json 없음 — 다른 JSON 파일 탐색', 'warn');
+      const jsonFiles = [];
+      zip.forEach((path, f) => { if(path.endsWith('.json')) jsonFiles.push(f); });
+      for (const jf of jsonFiles) {
+        const str = await jf.async('string');
+        const p = parseJSON(str);
+        if (p.length > 0) { pairs.push(...p); break; }
+      }
+    }
+  } catch(e) { log('  ZIP 처리 오류: '+e.message, 'err'); }
+  return pairs;
+}
+
 async function convert() {
   const logBox = document.getElementById('logBox');
   const resultBox = document.getElementById('resultBox');
@@ -233,28 +319,47 @@ async function convert() {
   resultBox.style.display = 'none';
   document.getElementById('logBody').innerHTML = '';
   resultData = '';
+
   const weight = parseInt(document.getElementById('weightInput').value) || 1;
   let allPairs = [], totalFiles = 0;
+
   for (const file of files) {
-    log(`파일 읽는 중: ${file.name}`, 'info');
-    const html = await file.text();
-    let pairs = parseHTML(html);
-    if (opts.Empty) pairs = pairs.filter(p => p.human.length > 2 && p.assistant.length > 2);
-    if (opts.PII) pairs = pairs.map(p => ({human:cleanPII(p.human), assistant:cleanPII(p.assistant)}));
+    const ext = getExt(file.name);
+    log(`파일 처리 중: ${file.name} (.${ext})`, 'info');
+
+    let pairs = [];
+    if (ext === 'zip') {
+      pairs = await parseZIP(file);
+    } else if (ext === 'json') {
+      const str = await file.text();
+      pairs = parseJSON(str);
+    } else {
+      const str = await file.text();
+      pairs = parseHTML(str);
+    }
+
+    if (opts.Empty) pairs = pairs.filter(p => p.human && p.assistant && p.human.length > 2 && p.assistant.length > 2);
+    if (opts.PII) pairs = pairs.map(p => ({human: cleanPII(p.human), assistant: cleanPII(p.assistant)}));
+
     log(`  → ${pairs.length}개 대화 쌍 추출`, pairs.length > 0 ? 'ok' : 'err');
-    for (let w = 0; w < weight; w++) allPairs = allPairs.concat(pairs);
+    if (pairs.length === 0) log('  구조를 인식 못했을 수 있어요. 파일을 확인해주세요.', 'warn');
+
+    for (let w=0; w<weight; w++) allPairs = allPairs.concat(pairs);
     totalFiles++;
   }
+
   log(`총 ${allPairs.length}개 라인 생성 (반복 ${weight}회)`, 'ok');
-  if (allPairs.length === 0) { log('변환 결과 없음. HTML 구조를 확인해주세요.', 'err'); return; }
+  if (allPairs.length === 0) { log('변환 결과 없음.', 'err'); return; }
+
   resultData = allPairs.map(p => JSON.stringify({human:p.human, assistant:p.assistant})).join('\n');
   document.getElementById('statPairs').textContent = allPairs.length;
   document.getElementById('statFiles').textContent = totalFiles;
   document.getElementById('statLines').textContent = allPairs.length;
-  document.getElementById('previewBox').textContent = resultData.slice(0, 500) + (resultData.length > 500 ? '\n...' : '');
+  document.getElementById('previewBox').textContent = resultData.slice(0, 600) + (resultData.length > 600 ? '\n...' : '');
   resultBox.style.display = 'block';
-  log('완료!', 'ok');
+  log('완료! ✓', 'ok');
 }
+
 function download() {
   const blob = new Blob([resultData], {type:'application/json'});
   const a = document.createElement('a');
